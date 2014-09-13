@@ -4,8 +4,9 @@
 // </copyright>
 // --------------------------------------------------------------------------------------------------------------------
 
-namespace HelixToolkit.Wpf
+namespace HelixToolkit.Extended
 {
+    using HelixToolkit.Wpf;
     using System;
     using System.Collections.Generic;
     using System.Globalization;
@@ -40,6 +41,8 @@ namespace HelixToolkit.Wpf
         /// The line number of the line being parsed.
         /// </summary>
         private int currentLineNo;
+
+        private IFileSystem fileSystem;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ObjReader" /> class.
@@ -165,8 +168,10 @@ namespace HelixToolkit.Wpf
         /// <returns>The model.</returns>
         public override Model3DGroup Read(string path)
         {
+            this.fileSystem = GetFileSystem();
+
             this.TexturePath = Path.GetDirectoryName(path);
-            using (var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var s = fileSystem.GetStream(path))
             {
                 return this.Read(s);
             }
@@ -179,6 +184,8 @@ namespace HelixToolkit.Wpf
         /// <returns>The model.</returns>
         public override Model3DGroup Read(Stream s)
         {
+            this.fileSystem = GetFileSystem();
+
             using (this.Reader = new StreamReader(s))
             {
                 this.currentLineNo = 0;
@@ -688,7 +695,7 @@ namespace HelixToolkit.Wpf
                 Material m = null;
                 this.Dispatch(() =>
                     {
-                        m = mat.GetMaterial(this.TexturePath);
+                        m = mat.GetMaterial(this.TexturePath, fileSystem);
                     });
                 return m;
             }
@@ -705,12 +712,12 @@ namespace HelixToolkit.Wpf
         private void LoadMaterialLib(string mtlFile)
         {
             var path = Path.Combine(this.TexturePath, mtlFile);
-            if (!File.Exists(path))
+            if (!fileSystem.FileExists(path))
             {
                 return;
             }
 
-            using (var materialReader = new StreamReader(path))
+            using (var materialReader = new StreamReader(fileSystem.GetStream(path)))
             {
                 MaterialDefinition currentMaterial = null;
 
@@ -841,6 +848,11 @@ namespace HelixToolkit.Wpf
         private void SetMaterial(string materialName)
         {
             this.CurrentGroup.Material = this.CurrentMaterial = this.GetMaterial(materialName);
+        }
+
+        protected virtual IFileSystem GetFileSystem()
+        {
+            return new BasicFileSystem();
         }
 
         /// <summary>
@@ -1031,6 +1043,8 @@ namespace HelixToolkit.Wpf
             /// <value>The material.</value>
             public Material Material { get; set; }
 
+            private IFileSystem fileSystem;
+
             /// <summary>
             /// Gets the material from the specified path.
             /// </summary>
@@ -1040,8 +1054,10 @@ namespace HelixToolkit.Wpf
             /// <returns>
             /// The material.
             /// </returns>
-            public Material GetMaterial(string texturePath)
+            public Material GetMaterial(string texturePath, IFileSystem fileSystem)
             {
+                this.fileSystem = fileSystem;
+
                 if (this.Material == null)
                 {
                     this.Material = this.CreateMaterial(texturePath);
@@ -1069,7 +1085,7 @@ namespace HelixToolkit.Wpf
                 else
                 {
                     var path = Path.Combine(texturePath, this.DiffuseMap);
-                    if (File.Exists(path))
+                    if (fileSystem.FileExists(path))
                     {
                         mg.Children.Add(new DiffuseMaterial(this.CreateTextureBrush(path)));
                     }
@@ -1083,7 +1099,7 @@ namespace HelixToolkit.Wpf
                 else
                 {
                     var path = Path.Combine(texturePath, this.AmbientMap);
-                    if (File.Exists(path))
+                    if (fileSystem.FileExists(path))
                     {
                         mg.Children.Add(new EmissiveMaterial(this.CreateTextureBrush(path)));
                     }
@@ -1105,9 +1121,26 @@ namespace HelixToolkit.Wpf
             /// <returns>The brush.</returns>
             private ImageBrush CreateTextureBrush(string path)
             {
-                var img = new BitmapImage(new Uri(path, UriKind.Relative));
-                var textureBrush = new ImageBrush(img) { Opacity = this.Dissolved, ViewportUnits = BrushMappingMode.Absolute, TileMode = TileMode.Tile };
-                return textureBrush;
+                using (var stream = fileSystem.GetStream(path))
+                {
+                    // TODO: Wrap the stream.
+                    // http://code.logos.com/blog/2009/05/wrappingstream_implementation.html
+                    var ms = new MemoryStream();
+
+                    stream.CopyTo(ms);
+                    ms.Seek(0, SeekOrigin.Begin);
+
+                    var img = new BitmapImage();
+                    img.CacheOption = BitmapCacheOption.OnLoad;
+                    img.BeginInit();
+                    img.StreamSource = ms;
+                    img.EndInit();
+
+                    img.Freeze();
+
+                    var textureBrush = new ImageBrush(img) { Opacity = this.Dissolved, ViewportUnits = BrushMappingMode.Absolute, TileMode = TileMode.Tile };
+                    return textureBrush;
+                }
             }
         }
     }
